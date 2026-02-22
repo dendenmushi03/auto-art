@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Auto Abstract Art</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles/design-tokens.css">
+  <link rel="stylesheet" href="styles/base.css">
+  <link rel="stylesheet" href="styles/landing.css">
+</head>
+<body>
+  <header class="landing-header">
+    <div class="container">
+      <a class="brand" href="/" aria-label="Auto Abstract Art">
+        <span class="brand-mark" aria-hidden="true"></span>
+        Auto Abstract Art
+      </a>
+      <a class="btn btn-primary" href="/app">今の作品を見る</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="container grid-2">
+        <div class="hero-copy">
+          <p class="eyebrow">LIMITED DROP / 3-HOUR WINDOW</p>
+          <h1 class="h1">風景を感じる抽象画を、3時間ごとに1点だけ。</h1>
+          <p>
+            Auto Abstract Art は、空・山・水・木の気配を残す抽象風景を生成し、
+            3時間だけ販売します。購入された瞬間にその作品は閉じ、次の作品へ切り替わります。
+          </p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="/app">今の作品を見る</a>
+            <a class="btn btn-secondary" href="#flow">購入の流れ</a>
+          </div>
+        </div>
+        <div class="card glass preview-card">
+          <div class="preview-meta">
+            <span class="eyebrow">CURRENT PREVIEW</span>
+            <strong id="preview-title">現在の作品を読み込み中...</strong>
+            <span id="preview-price" class="preview-price"></span>
+            <span id="preview-remaining" class="text-muted"></span>
+          </div>
+          <img id="preview-image" class="preview-image" alt="現在の作品プレビュー">
+          <div id="preview-fallback" class="text-muted" style="display:none;">プレビューを読み込めませんでした</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="flow" class="section">
+      <div class="container">
+        <h2 class="h2 section-title">仕組み</h2>
+        <div class="steps">
+          <article class="card step-card">
+            <span class="step-label">Step 01</span>
+            <h3>生成</h3>
+            <p class="text-muted">風景要素を含む抽象画を自動生成し、1点だけ公開します。</p>
+          </article>
+          <article class="card step-card">
+            <span class="step-label">Step 02</span>
+            <h3>販売</h3>
+            <p class="text-muted">作品は3時間限定。購入されると即クローズされます。</p>
+          </article>
+          <article class="card step-card">
+            <span class="step-label">Step 03</span>
+            <h3>購入で切替</h3>
+            <p class="text-muted">次のスロットで新作が公開され、同じ作品は再登場しません。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container">
+        <h2 class="h2 section-title">購入後の導線（広告枠）</h2>
+        <div class="card follow-card">
+          <p class="text-muted">
+            購入完了後、広告枠の入力ページへ案内されます。作品と一緒にあなたのメッセージが掲載されます。
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container">
+        <h2 class="h2 section-title">FAQ</h2>
+        <div class="faq">
+          <details>
+            <summary>販売終了後に購入できますか？</summary>
+            <p class="text-muted">販売終了後は購入できません。次のドロップをお待ちください。</p>
+          </details>
+          <details>
+            <summary>同じ作品は再販売されますか？</summary>
+            <p class="text-muted">再販売は行いません。生成された作品はそのドロップ限りです。</p>
+          </details>
+          <details>
+            <summary>支払い方法は何ですか？</summary>
+            <p class="text-muted">Stripe Checkout を利用して安全に決済できます。</p>
+          </details>
+          <details>
+            <summary>広告枠とは何ですか？</summary>
+            <p class="text-muted">購入者のみが入力できる紹介枠で、作品ページに掲載されます。</p>
+          </details>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+      <div class="footer-links">
+        <a href="#">利用規約</a>
+        <a href="#">プライバシー</a>
+      </div>
+      <p>© Auto Abstract Art</p>
+    </div>
+  </footer>
+
+  <script>
+    (() => {
+      const img = document.getElementById("preview-image");
+      const title = document.getElementById("preview-title");
+      const price = document.getElementById("preview-price");
+      const remaining = document.getElementById("preview-remaining");
+      const fallback = document.getElementById("preview-fallback");
+
+      function formatRemainText(expiresAtIso) {
+        const expiresAt = new Date(expiresAtIso);
+        const now = new Date();
+        const remainMs = Math.max(0, expiresAt - now);
+        const totalMin = Math.floor(remainMs / 1000 / 60);
+        const hours = Math.floor(totalMin / 60);
+        const mins = totalMin % 60;
+        if (hours > 0) return `残り ${hours}時間 ${mins}分`;
+        return `残り ${mins}分`;
+      }
+
+      async function loadPreview() {
+        try {
+          const res = await fetch("/api/current");
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data.artwork) {
+            throw new Error("no artwork");
+          }
+          const art = data.artwork;
+          title.textContent = art.title || "Abstract Artwork";
+          price.textContent = `${Number(art.price || 0).toLocaleString()} 円`;
+          remaining.textContent = formatRemainText(art.expiresAt);
+          img.src = art.imageUrl;
+          img.alt = art.title || "Abstract Artwork";
+          img.onerror = () => {
+            img.style.display = "none";
+            fallback.style.display = "block";
+          };
+        } catch (e) {
+          img.style.display = "none";
+          fallback.style.display = "block";
+          title.textContent = "現在の作品は準備中です";
+          price.textContent = "";
+          remaining.textContent = "";
+        }
+      }
+
+      loadPreview();
+    })();
+  </script>
+</body>
+</html>

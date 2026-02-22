@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>購入完了 - Auto Abstract Art</title>
+  <link rel="stylesheet" href="style.css">
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+</head>
+<body>
+  <main class="page">
+    <h1 class="title">ご購入ありがとうございました</h1>
+    <p>Stripeからのメール（領収書）をご確認ください。</p>
+
+    <div id="adBox" style="margin-top:16px; display:none;">
+      <p style="opacity:.9; margin-bottom:10px;">
+        特典：次の作品の販売期間（3時間）の間、あなたの広告を掲載できます。
+      </p>
+      <a id="adEditBtn" class="btn primary" href="#" style="display:inline-block;">
+        広告を設定する
+      </a>
+    </div>
+
+    <p id="adErr" style="margin-top:14px; color:#ef4444; display:none;"></p>
+
+    <p style="margin-top:18px;"><a href="/">トップへ戻る</a></p>
+  </main>
+
+  <script>
+    (async () => {
+      const qs = new URLSearchParams(location.search);
+      const sessionId = qs.get("session_id");
+      if (!sessionId) return; // session_id が無い時は導線を出さない
+
+      try {
+        const res = await fetch(`/api/ad-edit-link?session_id=${encodeURIComponent(sessionId)}`);
+        const data = await res.json();
+
+        if (!res.ok || !data?.editUrl) {
+          const msg = data?.error || "広告編集リンクの取得に失敗しました。";
+          const adErr = document.getElementById("adErr");
+          adErr.textContent = msg;
+          adErr.style.display = "block";
+          return;
+        }
+
+        const box = document.getElementById("adBox");
+        const btn = document.getElementById("adEditBtn");
+        btn.href = data.editUrl;
+        box.style.display = "block";
+      } catch (e) {
+        const adErr = document.getElementById("adErr");
+        adErr.textContent = "通信エラーで広告編集リンクを取得できませんでした。";
+        adErr.style.display = "block";
+      }
+    })();
+  </script>
+</body>
+</html>

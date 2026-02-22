@@ -1,0 +1,151 @@
+.landing-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: rgba(255, 255, 255, 0.9);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(10px);
+}
+
+.landing-header .container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 72px;
+  gap: var(--space-sm);
+}
+
+.brand {
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-mark {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #0f172a, #94a3b8);
+}
+
+.hero {
+  padding: var(--space-xl) 0 var(--space-lg);
+}
+
+.hero-copy p {
+  margin-top: var(--space-sm);
+  color: var(--muted);
+  line-height: 1.8;
+}
+
+.hero-actions {
+  margin-top: var(--space-md);
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.preview-card {
+  padding: var(--space-md);
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.preview-image {
+  width: 100%;
+  border-radius: 28px;
+  border: 1px solid var(--border);
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  background: #eef2f7;
+}
+
+.preview-meta {
+  display: grid;
+  gap: 6px;
+}
+
+.preview-price {
+  font-weight: 700;
+  font-size: var(--fs-lg);
+}
+
+.section-title {
+  margin-bottom: var(--space-sm);
+}
+
+.steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-sm);
+}
+
+.step-card {
+  padding: var(--space-sm);
+  display: grid;
+  gap: 8px;
+  min-height: 180px;
+}
+
+.step-label {
+  font-size: var(--fs-xs);
+  letter-spacing: 0.18em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.follow-card {
+  padding: var(--space-md);
+  display: grid;
+  gap: 10px;
+}
+
+.faq {
+  display: grid;
+  gap: 12px;
+}
+
+.faq details {
+  padding: 16px 18px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: #ffffff;
+}
+
+.faq summary {
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+
+.faq summary::-webkit-details-marker {
+  display: none;
+}
+
+.footer {
+  padding: var(--space-md) 0 var(--space-lg);
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.footer-links {
+  display: flex;
+  gap: 16px;
+}
+
+@media (max-width: 960px) {
+  .steps {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 680px) {
+  .landing-header .container {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 12px 0;
+  }
+}

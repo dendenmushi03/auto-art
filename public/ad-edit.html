@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>広告の設定 - Auto Abstract Art</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="./ad-edit.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="site-header__inner">
+      <a class="brand" href="/">Auto Abstract Art</a>
+      <span id="statusBadge" class="badge badge--muted">読み込み中</span>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="hero">
+      <h1 class="title">広告の設定</h1>
+      <p class="subtitle">この広告は <b>次の作品</b> の販売期間（3時間）中に、作品カードの下へ表示されます。</p>
+    </section>
+
+    <section class="grid">
+      <!-- Left: form -->
+      <section class="panel">
+        <div class="panel__head">
+          <h2 class="panel__title">入力</h2>
+          <p class="panel__desc">HTMLは使えません。リンクは <b>https</b> のみです。</p>
+        </div>
+
+        <div class="info-cards">
+          <div class="info-card">
+            <div class="info-card__label">表示期間</div>
+            <div id="rangeText" class="info-card__value">—</div>
+          </div>
+          <div class="info-card">
+            <div class="info-card__label">残り</div>
+            <div id="remainText" class="info-card__value">—</div>
+          </div>
+          <div class="info-card">
+            <div class="info-card__label">表示先</div>
+            <div class="info-card__value">トップページ（作品カード下）</div>
+          </div>
+        </div>
+
+        <form id="adForm" class="form" autocomplete="off" novalidate>
+          <label class="field">
+            <span class="field__label">タイトル <span class="req">必須</span></span>
+            <input id="titleInput" class="input" type="text" maxlength="60" placeholder="例）YouTube始めました！" required />
+            <span id="titleErr" class="field__error" hidden></span>
+          </label>
+
+          <label class="field">
+            <span class="field__label">リンクURL（https） <span class="req">必須</span></span>
+            <input id="urlInput" class="input" type="url" inputmode="url" placeholder="https://example.com" required />
+            <span id="urlErr" class="field__error" hidden></span>
+          </label>
+
+          <label class="field">
+            <span class="field__label">本文（任意）</span>
+            <textarea id="bodyInput" class="textarea" rows="5" maxlength="200" placeholder="例）AI作品を毎日投稿してます。見てね！"></textarea>
+            <div class="field__meta">
+              <span class="hint">最大200文字</span>
+              <span id="bodyCount" class="count">0/200</span>
+            </div>
+            <span id="bodyErr" class="field__error" hidden></span>
+          </label>
+
+          <div class="actions">
+            <button id="saveBtn" class="btn primary" type="submit">保存する</button>
+            <button id="resetBtn" class="btn ghost" type="button">入力を戻す</button>
+          </div>
+
+          <div id="formMsg" class="form-msg" hidden></div>
+        </form>
+      </section>
+
+      <!-- Right: preview -->
+      <aside class="panel">
+        <div class="panel__head">
+          <h2 class="panel__title">プレビュー</h2>
+          <p class="panel__desc">掲載される見た目です（概ねこのまま表示されます）。</p>
+        </div>
+
+        <div class="ad-preview">
+          <div class="ad-preview__card">
+            <div class="ad-preview__header">
+              <div id="pvTitle" class="ad-preview__title">（タイトル）</div>
+              <span class="ad-preview__badge">AD</span>
+            </div>
+            <div id="pvBody" class="ad-preview__body" hidden></div>
+            <a id="pvLink" class="btn primary ad-preview__cta" href="#" target="_blank" rel="noopener noreferrer">リンクを開く</a>
+          </div>
+          <p class="ad-preview__note">※掲載内容は購入者の入力です</p>
+        </div>
+
+        <div class="panel__foot">
+          <details class="rules">
+            <summary>禁止事項</summary>
+            <ul>
+              <li>詐欺・違法行為・誇大広告</li>
+              <li>成人向け/露骨な性的表現</li>
+              <li>他者の権利侵害（著作権/商標/名誉毀損 等）</li>
+            </ul>
+          </details>
+        </div>
+      </aside>
+    </section>
+  </main>
+</body>
+</html>
