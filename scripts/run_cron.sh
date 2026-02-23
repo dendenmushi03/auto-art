@@ -1,21 +1,57 @@
 #!/bin/bash
 set -euo pipefail
 
-APP_URL="${APP_URL:-https://YOUR-APP.onrender.com}"
-CRON_KEY="${CRON_KEY:-YOUR_CRON_SECRET}"
+# IMPORTANT:
+# - This must target the *web service* URL, not the cron service URL.
+# - In Render Cron services, RENDER_EXTERNAL_URL points to the cron service itself,
+#   so we intentionally DO NOT use it here.
+APP_URL="${APP_URL:-${WEB_SERVICE_URL:-}}"
+CRON_KEY="${CRON_KEY:-${CRON_SECRET:-}}"
+CRON_ENDPOINT_PATH="${CRON_ENDPOINT_PATH:-/cron/run}"
 REQUEST_TIMEOUT_SEC="${REQUEST_TIMEOUT_SEC:-30}"
+CURL_RETRY_COUNT="${CURL_RETRY_COUNT:-2}"
+CURL_RETRY_DELAY_SEC="${CURL_RETRY_DELAY_SEC:-2}"
 
 log() {
   echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] [cron-runner] $*"
 }
 
-log "start: trigger /cron/run"
-log "target=${APP_URL}/cron/run"
+fail() {
+  log "error: $*"
+  exit 1
+}
+
+if [[ -z "${APP_URL}" ]]; then
+  fail "APP_URL is not set. Set APP_URL (or WEB_SERVICE_URL) to your web service base URL."
+fi
+
+if [[ -z "${CRON_KEY}" ]]; then
+  fail "CRON_KEY is not set. Set CRON_KEY (or CRON_SECRET) to match the web service CRON_SECRET."
+fi
+
+if [[ "${APP_URL}" == *"YOUR-APP"* ]]; then
+  fail "APP_URL looks like a placeholder (${APP_URL}). Set the real Render web URL."
+fi
+
+if [[ "${APP_URL}" != http://* && "${APP_URL}" != https://* ]]; then
+  fail "APP_URL must start with http:// or https:// (current: ${APP_URL})"
+fi
+
+# Normalize URL pieces.
+base_url="${APP_URL%/}"
+path="/${CRON_ENDPOINT_PATH#/}"
+endpoint="${base_url}${path}"
+
+log "start: trigger ${path}"
+log "target=${endpoint}"
 
 response_body_file="$(mktemp)"
 http_code="$({
   curl --fail-with-body -sS -m "${REQUEST_TIMEOUT_SEC}" \
-    -X POST "${APP_URL}/cron/run" \
+    --retry "${CURL_RETRY_COUNT}" \
+    --retry-delay "${CURL_RETRY_DELAY_SEC}" \
+    --retry-all-errors \
+    -X POST "${endpoint}" \
     -H "x-cron-key: ${CRON_KEY}" \
     -o "${response_body_file}" \
     -w '%{http_code}'

@@ -53,6 +53,12 @@ let isGeneratingArtwork = false;
 let autoGenerateTimer = null;
 let serverInstance = null;
 let isShuttingDown = false;
+let isBooting = false;
+
+const BOOT_RETRY_DELAY_MS = Math.max(
+  1000,
+  Number.parseInt(process.env.BOOT_RETRY_DELAY_MS || "10000", 10) || 10000
+);
 
 function isDbConnected() {
   return mongoose.connection.readyState === 1;
@@ -239,21 +245,8 @@ function resolveExistingImagePath(imageUrl) {
   };
 }
 
-async function repairArtworkImage(artworkId) {
-  const relPath = await generateArtWithPython();
-  const imageUrl = "/" + relPath.replace(/\\/g, "/");
-
-  const repaired = await Artwork.findByIdAndUpdate(
-    artworkId,
-    {
-      imageUrl,
-    },
-    { new: true }
-  )
-    .populate("adSlotId")
-    .lean();
-
-  return repaired;
+function getFallbackImagePathForArtwork(artworkId) {
+  return `/api/artwork-image/${artworkId}.png`;
 }
 
 // URLバリデーション（購入者入力広告）
@@ -325,6 +318,19 @@ async function cleanupExpired(nowUtc) {
   console.log("[cleanup] end");
 }
 
+function toArtworkSummary(artwork) {
+  if (!artwork) return null;
+  return {
+    _id: artwork._id,
+    status: artwork.status,
+    createdAt: artwork.createdAt,
+    expiresAt: artwork.expiresAt,
+    imageUrl: artwork.imageUrl,
+    price: artwork.price,
+    currency: artwork.currency,
+  };
+}
+
 async function generateNewArtwork({ force = false } = {}) {
   const nowUtc = new Date();
 
@@ -343,14 +349,27 @@ async function generateNewArtwork({ force = false } = {}) {
       .sort({ createdAt: -1 })
       .lean();
     if (activeForSale) {
-      console.log("まだ販売期間内のため、新作生成はスキップ");
-      return null;
+      const result = {
+        created: false,
+        reason: "active_for_sale_exists",
+        artwork: null,
+        activeArtwork: toArtworkSummary(activeForSale),
+      };
+      console.log("[generate] skip reason=active_for_sale_exists", {
+        activeArtwork: result.activeArtwork,
+      });
+      return result;
     }
   }
 
   // 1) Pythonで生成
   const relPath = await generateArtWithPython();
   const imageUrl = "/" + relPath.replace(/\\/g, "/");
+  const imageCheck = resolveExistingImagePath(imageUrl);
+  if (!imageCheck.exists || !imageCheck.path) {
+    throw new Error(`generated_image_not_found_for_backup: imageUrl=${imageUrl}`);
+  }
+  const imagePng = fs.readFileSync(imageCheck.path);
 
   // 2) 価格
   const price = getRandomPrice();
@@ -374,6 +393,7 @@ async function generateNewArtwork({ force = false } = {}) {
     title: "Abstract Artwork",
     prompt: "Python generative abstract art",
     imageUrl,
+    imagePng,
     price,
     currency: "jpy",
     status: "for_sale",
@@ -403,20 +423,44 @@ async function generateNewArtwork({ force = false } = {}) {
     console.log("[ad] slot assigned:", slot._id.toString(), "-> artwork", doc._id.toString());
   }
 
+  const result = {
+    created: true,
+    reason: "created",
+    artwork: toArtworkSummary(doc),
+    activeArtwork: null,
+  };
+
   console.log(`[generate] created artworkId=${doc._id.toString()} imageUrl=${imageUrl} price=${price} expiresAt=${expiresAt.toISOString()}`);
+  console.log("[generate] result", {
+    reason: result.reason,
+    activeArtwork: result.activeArtwork,
+  });
   console.log("[generate] end");
-  return doc;
+  return result;
 }
 
 async function generateNewArtworkWithLock(source, { force = false } = {}) {
   if (isGeneratingArtwork) {
-    console.log(`[generate] skip (${source}): generation is already running`);
-    return null;
+    const result = {
+      created: false,
+      reason: "generation_already_running",
+      artwork: null,
+      activeArtwork: null,
+    };
+    console.log(`[generate] skip (${source}) reason=${result.reason}`, {
+      activeArtwork: result.activeArtwork,
+    });
+    return result;
   }
 
   isGeneratingArtwork = true;
   try {
-    return await generateNewArtwork({ force });
+    const result = await generateNewArtwork({ force });
+    console.log(`[generate] done (${source})`, {
+      reason: result.reason,
+      activeArtwork: result.activeArtwork,
+    });
+    return result;
   } finally {
     isGeneratingArtwork = false;
   }
@@ -456,6 +500,28 @@ function startAutoGenerateLoopIfEnabled() {
 // ======================================================
 // 5) API：現在販売中の作品 + 表示する広告
 // ======================================================
+app.get("/api/artwork-image/:artworkId.png", async (req, res) => {
+  try {
+    const { artworkId } = req.params;
+    const artwork = await Artwork.findById(artworkId).select("+imagePng").lean();
+    if (!artwork?.imagePng) {
+      return res.status(404).send("not found");
+    }
+
+    const backupBuffer = Buffer.isBuffer(artwork.imagePng)
+      ? artwork.imagePng
+      : artwork.imagePng?.buffer
+        ? Buffer.from(artwork.imagePng.buffer)
+        : Buffer.from(artwork.imagePng);
+
+    res.set("Content-Type", "image/png");
+    return res.send(backupBuffer);
+  } catch (err) {
+    console.error("[/api/artwork-image/:artworkId.png] failed:", err);
+    return res.status(500).send("failed");
+  }
+});
+
 app.get("/api/current", async (req, res) => {
   const nowUtc = new Date();
 
@@ -491,30 +557,8 @@ app.get("/api/current", async (req, res) => {
       });
     }
 
-    const imageCheck = resolveExistingImagePath(artwork.imageUrl);
-    if (!imageCheck.exists) {
-      console.warn("[/api/current] artwork image file missing. trying repair...", {
-        artworkId: artwork._id?.toString?.() || artwork._id,
-        imageUrl: artwork.imageUrl,
-        candidates: imageCheck.candidates,
-      });
-
-      try {
-        const repaired = await repairArtworkImage(artwork._id);
-        if (repaired?.imageUrl) {
-          artwork = repaired;
-          console.log("[/api/current] artwork image repaired", {
-            artworkId: artwork._id?.toString?.() || artwork._id,
-            imageUrl: artwork.imageUrl,
-          });
-        }
-      } catch (repairErr) {
-        console.error("[/api/current] artwork image repair failed", {
-          artworkId: artwork._id?.toString?.() || artwork._id,
-          error: repairErr.message,
-        });
-      }
-    }
+    // 画像は常に DB バックアップ配信 API から返す（Render の一時ディスク非依存）
+    artwork.imageUrl = getFallbackImagePathForArtwork(artwork._id);
 
     let ad = null;
     if (artwork?.adSlotId) {
@@ -543,6 +587,23 @@ app.get("/api/current", async (req, res) => {
   }
 });
 
+
+app.get("/api/debug/for-sale", async (req, res) => {
+  try {
+    const forSaleArtworks = await Artwork.find({ status: "for_sale" })
+      .select("_id status createdAt expiresAt imageUrl")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return res.json({
+      count: forSaleArtworks.length,
+      items: forSaleArtworks,
+    });
+  } catch (err) {
+    console.error("[/api/debug/for-sale] failed:", err);
+    return res.status(500).json({ error: "debug_for_sale_failed", message: err.message });
+  }
+});
 
 app.get("/api/debug/current-file", async (req, res) => {
   try {
@@ -709,8 +770,15 @@ app.post("/cron/run", async (req, res) => {
   }
 
   try {
-    const doc = await generateNewArtworkWithLock("cron");
-    res.json({ ok: true, created: !!doc, artworkId: doc?._id });
+    const result = await generateNewArtworkWithLock("cron");
+    res.json({
+      ok: true,
+      created: result.created,
+      reason: result.reason,
+      artworkId: result.artwork?._id || null,
+      artwork: result.artwork,
+      activeForSale: result.activeArtwork,
+    });
   } catch (err) {
     console.error("cron error:", err);
     res.status(500).json({ error: "cron failed", message: err.message });
@@ -735,8 +803,15 @@ if (!isProduction) {
     }
 
     try {
-      const doc = await generateNewArtworkWithLock("dev-force", { force: true });
-      return res.json({ ok: true, created: !!doc, artworkId: doc?._id });
+      const result = await generateNewArtworkWithLock("dev-force", { force: true });
+      return res.json({
+        ok: true,
+        created: result.created,
+        reason: result.reason,
+        artworkId: result.artwork?._id || null,
+        artwork: result.artwork,
+        activeForSale: result.activeArtwork,
+      });
     } catch (err) {
       console.error("dev generate error:", err);
       return res.status(500).json({ error: "failed to generate now", message: err.message });
@@ -750,6 +825,12 @@ if (!isProduction) {
 const port = process.env.PORT || 3000;
 
 async function boot() {
+  if (isBooting || serverInstance) {
+    return;
+  }
+
+  isBooting = true;
+
   try {
     await connectDB(process.env.MONGODB_URI);
     serverInstance = app.listen(port, () => {
@@ -758,12 +839,19 @@ async function boot() {
       startAutoGenerateLoopIfEnabled();
     });
   } catch (err) {
-    await safeShutdown("boot failed", err);
+    console.error(`[boot] failed. retrying in ${BOOT_RETRY_DELAY_MS}ms`);
+    console.error("[boot] details:", err);
+
+    setTimeout(() => {
+      boot();
+    }, BOOT_RETRY_DELAY_MS);
+  } finally {
+    isBooting = false;
   }
 }
 
 process.on("unhandledRejection", (reason) => {
-  safeShutdown("unhandledRejection", reason);
+  console.error("[runtime] unhandledRejection:", reason);
 });
 
 process.on("uncaughtException", (err) => {
