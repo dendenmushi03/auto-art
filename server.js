@@ -482,23 +482,6 @@ app.get("/api/current", async (req, res) => {
         imageUrl: artwork.imageUrl,
         candidates: imageCheck.candidates,
       });
-
-      await Artwork.findByIdAndUpdate(artwork._id, {
-        status: "burned",
-        unlistedAt: nowUtc,
-        unlistedReason: "missing_image_file",
-      });
-
-      const nextArtwork = await generateNewArtworkWithLock("missing-image-recovery", { force: true });
-      if (!nextArtwork) {
-        return res.json({
-          artwork: null,
-          ad: null,
-          message: "現在公開中の作品はありません。次の出品をお待ちください。",
-        });
-      }
-
-      return res.json({ artwork: nextArtwork, ad: null, recovered: true });
     }
 
     let ad = null;
