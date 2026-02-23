@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 const artworkSchema = new mongoose.Schema({
   title: String,
   imageUrl: String,      // /generated/xxx.png 形式
+  imagePng: { type: Buffer, default: null, select: false }, // 生成時のバックアップ（永続）
   prompt: String,
   price: Number,
   currency: { type: String, default: "jpy" },
