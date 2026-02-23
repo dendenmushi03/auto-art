@@ -43,6 +43,10 @@
   - If you use Render Cron Job (`bash scripts/run_cron.sh`), set these env vars on the cron service:
     - `APP_URL=https://<your-service>.onrender.com` (推奨。`WEB_SERVICE_URL` でも可)
     - `CRON_KEY=<CRON_SECRET>` (or `CRON_SECRET`)
+  - Security notes:
+    - `APP_URL` / `CRON_KEY` の `<...>` は**プレースホルダー**です。Render の Environment には実際の値を入力してください。
+    - `CRON_KEY` は機密情報です。GitHub/コード/スクショ/チャットに貼らないでください。
+    - 機密情報は Render の Environment Variables だけで管理し、漏えい時は `CRON_SECRET` を再発行してください。
 
 ## Dev Force Generate Endpoint
 
