@@ -40,8 +40,9 @@
 - Cron (every 3 hours):
   - Endpoint: `POST https://<your-service>.onrender.com/cron/run`
   - Header: `x-cron-key: <CRON_SECRET>`
-  - Example command:
-    - `curl -X POST "https://<your-service>.onrender.com/cron/run" -H "x-cron-key: <CRON_SECRET>"`
+  - If you use Render Cron Job (`bash scripts/run_cron.sh`), set these env vars on the cron service:
+    - `APP_URL=https://<your-service>.onrender.com` (or `RENDER_EXTERNAL_URL` / `WEB_SERVICE_URL`)
+    - `CRON_KEY=<CRON_SECRET>` (or `CRON_SECRET`)
 
 ## Dev Force Generate Endpoint
 
