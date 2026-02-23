@@ -503,7 +503,11 @@ function startAutoGenerateLoopIfEnabled() {
 app.get("/api/artwork-image/:artworkId.png", async (req, res) => {
   try {
     const { artworkId } = req.params;
-    const artwork = await Artwork.findById(artworkId).select("+imagePng").lean();
+    if (!mongoose.Types.ObjectId.isValid(artworkId)) {
+      return res.status(400).json({ error: "invalid_artwork_id", artworkId });
+    }
+
+    const artwork = await Artwork.findById(artworkId).select("imageUrl +imagePng").lean();
     if (!artwork?.imagePng) {
       return res.status(404).send("not found");
     }
@@ -559,6 +563,7 @@ app.get("/api/current", async (req, res) => {
 
     // 画像は常に DB バックアップ配信 API から返す（Render の一時ディスク非依存）
     artwork.imageUrl = getFallbackImagePathForArtwork(artwork._id);
+    artwork.artworkId = String(artwork._id);
 
     let ad = null;
     if (artwork?.adSlotId) {
