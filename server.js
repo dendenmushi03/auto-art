@@ -250,7 +250,7 @@ function getFallbackImagePathForArtwork(artworkId) {
 }
 
 async function findArtworkImageBackupBuffer(artworkId) {
-  const artworkWithBackup = await Artwork.findById(artworkId).select("imagePng").lean();
+  const artworkWithBackup = await Artwork.findById(artworkId).select("+imagePng").lean();
   const raw = artworkWithBackup?.imagePng;
   if (!raw) return null;
 
@@ -375,8 +375,11 @@ async function generateNewArtwork({ force = false } = {}) {
   // 1) Pythonで生成
   const relPath = await generateArtWithPython();
   const imageUrl = "/" + relPath.replace(/\\/g, "/");
-  const imageBackupPath = path.join(publicDir, relPath);
-  const imagePng = fs.readFileSync(imageBackupPath);
+  const imageCheck = resolveExistingImagePath(imageUrl);
+  if (!imageCheck.exists || !imageCheck.path) {
+    throw new Error(`generated_image_not_found_for_backup: imageUrl=${imageUrl}`);
+  }
+  const imagePng = fs.readFileSync(imageCheck.path);
 
   // 2) 価格
   const price = getRandomPrice();
@@ -510,7 +513,7 @@ function startAutoGenerateLoopIfEnabled() {
 app.get("/api/artwork-image/:artworkId.png", async (req, res) => {
   try {
     const { artworkId } = req.params;
-    const artwork = await Artwork.findById(artworkId).select("imageUrl imagePng").lean();
+    const artwork = await Artwork.findById(artworkId).select("imageUrl +imagePng").lean();
     if (!artwork) {
       return res.status(404).send("not found");
     }
@@ -585,11 +588,17 @@ app.get("/api/current", async (req, res) => {
       if (backupBuffer) {
         artwork.imageUrl = getFallbackImagePathForArtwork(artwork._id);
       } else {
-        return res.status(503).json({
+        await Artwork.findByIdAndUpdate(artwork._id, {
+          status: "burned",
+          unlistedAt: nowUtc,
+          unlistedReason: "image_missing_no_backup",
+        });
+
+        return res.json({
           artwork: null,
           ad: null,
-          error: "artwork_image_missing",
-          message: "現在の販売画像を取得できません。しばらくしてから再試行してください。",
+          message: "現在の販売画像が失われたため、この出品はクローズされました。次の出品をお待ちください。",
+          reason: "image_missing_no_backup",
         });
       }
     }
