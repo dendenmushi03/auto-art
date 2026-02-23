@@ -249,16 +249,6 @@ function getFallbackImagePathForArtwork(artworkId) {
   return `/api/artwork-image/${artworkId}.png`;
 }
 
-async function findArtworkImageBackupBuffer(artworkId) {
-  const artworkWithBackup = await Artwork.findById(artworkId).select("+imagePng").lean();
-  const raw = artworkWithBackup?.imagePng;
-  if (!raw) return null;
-
-  if (Buffer.isBuffer(raw)) return raw;
-  if (raw?.buffer) return Buffer.from(raw.buffer);
-  return Buffer.from(raw);
-}
-
 // URLバリデーション（購入者入力広告）
 function normalizeUrl(url) {
   if (!url) return "";
@@ -513,17 +503,8 @@ function startAutoGenerateLoopIfEnabled() {
 app.get("/api/artwork-image/:artworkId.png", async (req, res) => {
   try {
     const { artworkId } = req.params;
-    const artwork = await Artwork.findById(artworkId).select("imageUrl +imagePng").lean();
-    if (!artwork) {
-      return res.status(404).send("not found");
-    }
-
-    const imageCheck = resolveExistingImagePath(artwork.imageUrl);
-    if (imageCheck.exists && imageCheck.path) {
-      return res.sendFile(imageCheck.path);
-    }
-
-    if (!artwork.imagePng) {
+    const artwork = await Artwork.findById(artworkId).select("+imagePng").lean();
+    if (!artwork?.imagePng) {
       return res.status(404).send("not found");
     }
 
@@ -576,32 +557,8 @@ app.get("/api/current", async (req, res) => {
       });
     }
 
-    const imageCheck = resolveExistingImagePath(artwork.imageUrl);
-    if (!imageCheck.exists) {
-      console.error("[/api/current] artwork image file missing. trying immutable fallback.", {
-        artworkId: artwork._id?.toString?.() || artwork._id,
-        imageUrl: artwork.imageUrl,
-        candidates: imageCheck.candidates,
-      });
-
-      const backupBuffer = await findArtworkImageBackupBuffer(artwork._id);
-      if (backupBuffer) {
-        artwork.imageUrl = getFallbackImagePathForArtwork(artwork._id);
-      } else {
-        await Artwork.findByIdAndUpdate(artwork._id, {
-          status: "burned",
-          unlistedAt: nowUtc,
-          unlistedReason: "image_missing_no_backup",
-        });
-
-        return res.json({
-          artwork: null,
-          ad: null,
-          message: "現在の販売画像が失われたため、この出品はクローズされました。次の出品をお待ちください。",
-          reason: "image_missing_no_backup",
-        });
-      }
-    }
+    // 画像は常に DB バックアップ配信 API から返す（Render の一時ディスク非依存）
+    artwork.imageUrl = getFallbackImagePathForArtwork(artwork._id);
 
     let ad = null;
     if (artwork?.adSlotId) {
