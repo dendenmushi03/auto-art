@@ -239,6 +239,22 @@ function resolveExistingImagePath(imageUrl) {
   };
 }
 
+async function repairArtworkImage(artworkId) {
+  const relPath = await generateArtWithPython();
+  const imageUrl = "/" + relPath.replace(/\\/g, "/");
+
+  const repaired = await Artwork.findByIdAndUpdate(
+    artworkId,
+    {
+      imageUrl,
+    },
+    { new: true }
+  )
+    .populate("adSlotId")
+    .lean();
+
+  return repaired;
+}
 
 // URLバリデーション（購入者入力広告）
 function normalizeUrl(url) {
@@ -458,7 +474,7 @@ app.get("/api/current", async (req, res) => {
 
   try {
     // for_sale かつ販売期間内（UTC基準）
-    const artwork = await Artwork.findOne({
+    let artwork = await Artwork.findOne({
       status: "for_sale",
       createdAt: { $lte: nowUtc },
       expiresAt: { $gt: nowUtc },
@@ -477,11 +493,27 @@ app.get("/api/current", async (req, res) => {
 
     const imageCheck = resolveExistingImagePath(artwork.imageUrl);
     if (!imageCheck.exists) {
-      console.warn("[/api/current] artwork image file missing", {
+      console.warn("[/api/current] artwork image file missing. trying repair...", {
         artworkId: artwork._id?.toString?.() || artwork._id,
         imageUrl: artwork.imageUrl,
         candidates: imageCheck.candidates,
       });
+
+      try {
+        const repaired = await repairArtworkImage(artwork._id);
+        if (repaired?.imageUrl) {
+          artwork = repaired;
+          console.log("[/api/current] artwork image repaired", {
+            artworkId: artwork._id?.toString?.() || artwork._id,
+            imageUrl: artwork.imageUrl,
+          });
+        }
+      } catch (repairErr) {
+        console.error("[/api/current] artwork image repair failed", {
+          artworkId: artwork._id?.toString?.() || artwork._id,
+          error: repairErr.message,
+        });
+      }
     }
 
     let ad = null;
