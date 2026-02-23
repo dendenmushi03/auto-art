@@ -6,7 +6,9 @@ import { exec } from "child_process";
 import Stripe from "stripe";
 import crypto from "crypto";
 import path from "path";
+import fs from "fs";
 import mongoose from "mongoose";
+import { fileURLToPath } from "url";
 
 import { connectDB } from "./config/db.js";
 import { Artwork } from "./models/Artwork.js";
@@ -15,6 +17,12 @@ import { AdSlot } from "./models/AdSlot.js";
 dotenv.config();
 
 const app = express();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const publicDir = path.join(__dirname, "public");
+const generatedDir = path.join(publicDir, "generated");
+const legacyGeneratedDir = path.join(__dirname, "generated");
+
 const nodeEnv = process.env.NODE_ENV || "development";
 const isProduction = nodeEnv === "production";
 const hasDevSecret = !!process.env.DEV_SECRET;
@@ -149,9 +157,16 @@ await AdSlot.create({
 // ======================================================
 app.use(cors());
 app.use(express.json());
-app.get("/", (req, res) => res.sendFile(path.join(process.cwd(), "public", "landing.html")));
-app.get("/app", (req, res) => res.sendFile(path.join(process.cwd(), "public", "app.html")));
-app.use(express.static("public"));
+app.get("/", (req, res) => res.sendFile(path.join(publicDir, "landing.html")));
+app.get("/app", (req, res) => res.sendFile(path.join(publicDir, "app.html")));
+
+// 静的配信（/public 配下を公開）
+app.use(express.static(publicDir));
+
+// /generated を明示的に公開（画像）
+app.use("/generated", express.static(generatedDir));
+// 旧保存先 generated/ も後方互換で公開
+app.use("/generated", express.static(legacyGeneratedDir));
 
 app.get("/health", (req, res) => {
   res.json({ ok: true, app: "auto-art", nodeEnv, isProduction });
@@ -180,8 +195,10 @@ function getRandomPrice() {
 const PYTHON_CMD = process.env.PYTHON_CMD || "python";
 
 function generateArtWithPython() {
+  fs.mkdirSync(generatedDir, { recursive: true });
+
   return new Promise((resolve, reject) => {
-    exec(`${PYTHON_CMD} generate_art.py`, (err, stdout, stderr) => {
+    exec(`${PYTHON_CMD} generate_art.py`, { cwd: __dirname }, (err, stdout, stderr) => {
       if (err) {
         console.error("Python error:", err, stderr);
         return reject(err);
@@ -197,6 +214,31 @@ function generateArtWithPython() {
     });
   });
 }
+
+function getImageCandidatePaths(imageUrl) {
+  if (!imageUrl) return [];
+
+  const normalizedImageUrl = String(imageUrl).replace(/\\/g, "/");
+  const relativePath = normalizedImageUrl.startsWith("/")
+    ? normalizedImageUrl.slice(1)
+    : normalizedImageUrl;
+
+  return [
+    path.join(publicDir, relativePath),
+    path.join(__dirname, relativePath),
+  ];
+}
+
+function resolveExistingImagePath(imageUrl) {
+  const candidates = getImageCandidatePaths(imageUrl);
+  const existingPath = candidates.find((candidate) => fs.existsSync(candidate));
+  return {
+    exists: Boolean(existingPath),
+    path: existingPath || candidates[0] || null,
+    candidates,
+  };
+}
+
 
 // URLバリデーション（購入者入力広告）
 function normalizeUrl(url) {
@@ -433,6 +475,32 @@ app.get("/api/current", async (req, res) => {
       });
     }
 
+    const imageCheck = resolveExistingImagePath(artwork.imageUrl);
+    if (!imageCheck.exists) {
+      console.warn("[/api/current] artwork image file missing", {
+        artworkId: artwork._id?.toString?.() || artwork._id,
+        imageUrl: artwork.imageUrl,
+        candidates: imageCheck.candidates,
+      });
+
+      await Artwork.findByIdAndUpdate(artwork._id, {
+        status: "burned",
+        unlistedAt: nowUtc,
+        unlistedReason: "missing_image_file",
+      });
+
+      const nextArtwork = await generateNewArtworkWithLock("missing-image-recovery", { force: true });
+      if (!nextArtwork) {
+        return res.json({
+          artwork: null,
+          ad: null,
+          message: "現在公開中の作品はありません。次の出品をお待ちください。",
+        });
+      }
+
+      return res.json({ artwork: nextArtwork, ad: null, recovered: true });
+    }
+
     let ad = null;
     if (artwork?.adSlotId) {
       const slot = artwork.adSlotId;
@@ -457,6 +525,37 @@ app.get("/api/current", async (req, res) => {
       error: "current_fetch_failed",
       message: "現在作品情報の取得に失敗しました。時間をおいて再試行してください。",
     });
+  }
+});
+
+
+app.get("/api/debug/current-file", async (req, res) => {
+  try {
+    const nowUtc = new Date();
+    const artwork = await Artwork.findOne({
+      status: "for_sale",
+      createdAt: { $lte: nowUtc },
+      expiresAt: { $gt: nowUtc },
+    })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    if (!artwork?.imageUrl) {
+      return res.json({ exists: false, path: null, imageUrl: null, reason: "no_current_artwork" });
+    }
+
+    const imageCheck = resolveExistingImagePath(artwork.imageUrl);
+
+    return res.json({
+      exists: imageCheck.exists,
+      path: imageCheck.path,
+      candidates: imageCheck.candidates,
+      imageUrl: artwork.imageUrl,
+    });
+
+  } catch (err) {
+    console.error("[/api/debug/current-file] failed:", err);
+    return res.status(500).json({ error: "debug_current_file_failed", message: err.message });
   }
 });
 
