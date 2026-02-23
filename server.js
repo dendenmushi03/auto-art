@@ -328,6 +328,19 @@ async function cleanupExpired(nowUtc) {
   console.log("[cleanup] end");
 }
 
+function toArtworkSummary(artwork) {
+  if (!artwork) return null;
+  return {
+    _id: artwork._id,
+    status: artwork.status,
+    createdAt: artwork.createdAt,
+    expiresAt: artwork.expiresAt,
+    imageUrl: artwork.imageUrl,
+    price: artwork.price,
+    currency: artwork.currency,
+  };
+}
+
 async function generateNewArtwork({ force = false } = {}) {
   const nowUtc = new Date();
 
@@ -346,8 +359,16 @@ async function generateNewArtwork({ force = false } = {}) {
       .sort({ createdAt: -1 })
       .lean();
     if (activeForSale) {
-      console.log("まだ販売期間内のため、新作生成はスキップ");
-      return null;
+      const result = {
+        created: false,
+        reason: "active_for_sale_exists",
+        artwork: null,
+        activeArtwork: toArtworkSummary(activeForSale),
+      };
+      console.log("[generate] skip reason=active_for_sale_exists", {
+        activeArtwork: result.activeArtwork,
+      });
+      return result;
     }
   }
 
@@ -409,20 +430,44 @@ async function generateNewArtwork({ force = false } = {}) {
     console.log("[ad] slot assigned:", slot._id.toString(), "-> artwork", doc._id.toString());
   }
 
+  const result = {
+    created: true,
+    reason: "created",
+    artwork: toArtworkSummary(doc),
+    activeArtwork: null,
+  };
+
   console.log(`[generate] created artworkId=${doc._id.toString()} imageUrl=${imageUrl} price=${price} expiresAt=${expiresAt.toISOString()}`);
+  console.log("[generate] result", {
+    reason: result.reason,
+    activeArtwork: result.activeArtwork,
+  });
   console.log("[generate] end");
-  return doc;
+  return result;
 }
 
 async function generateNewArtworkWithLock(source, { force = false } = {}) {
   if (isGeneratingArtwork) {
-    console.log(`[generate] skip (${source}): generation is already running`);
-    return null;
+    const result = {
+      created: false,
+      reason: "generation_already_running",
+      artwork: null,
+      activeArtwork: null,
+    };
+    console.log(`[generate] skip (${source}) reason=${result.reason}`, {
+      activeArtwork: result.activeArtwork,
+    });
+    return result;
   }
 
   isGeneratingArtwork = true;
   try {
-    return await generateNewArtwork({ force });
+    const result = await generateNewArtwork({ force });
+    console.log(`[generate] done (${source})`, {
+      reason: result.reason,
+      activeArtwork: result.activeArtwork,
+    });
+    return result;
   } finally {
     isGeneratingArtwork = false;
   }
@@ -576,6 +621,23 @@ app.get("/api/current", async (req, res) => {
   }
 });
 
+
+app.get("/api/debug/for-sale", async (req, res) => {
+  try {
+    const forSaleArtworks = await Artwork.find({ status: "for_sale" })
+      .select("_id status createdAt expiresAt imageUrl")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return res.json({
+      count: forSaleArtworks.length,
+      items: forSaleArtworks,
+    });
+  } catch (err) {
+    console.error("[/api/debug/for-sale] failed:", err);
+    return res.status(500).json({ error: "debug_for_sale_failed", message: err.message });
+  }
+});
 
 app.get("/api/debug/current-file", async (req, res) => {
   try {
@@ -742,8 +804,15 @@ app.post("/cron/run", async (req, res) => {
   }
 
   try {
-    const doc = await generateNewArtworkWithLock("cron");
-    res.json({ ok: true, created: !!doc, artworkId: doc?._id });
+    const result = await generateNewArtworkWithLock("cron");
+    res.json({
+      ok: true,
+      created: result.created,
+      reason: result.reason,
+      artworkId: result.artwork?._id || null,
+      artwork: result.artwork,
+      activeForSale: result.activeArtwork,
+    });
   } catch (err) {
     console.error("cron error:", err);
     res.status(500).json({ error: "cron failed", message: err.message });
@@ -768,8 +837,15 @@ if (!isProduction) {
     }
 
     try {
-      const doc = await generateNewArtworkWithLock("dev-force", { force: true });
-      return res.json({ ok: true, created: !!doc, artworkId: doc?._id });
+      const result = await generateNewArtworkWithLock("dev-force", { force: true });
+      return res.json({
+        ok: true,
+        created: result.created,
+        reason: result.reason,
+        artworkId: result.artwork?._id || null,
+        artwork: result.artwork,
+        activeForSale: result.activeArtwork,
+      });
     } catch (err) {
       console.error("dev generate error:", err);
       return res.status(500).json({ error: "failed to generate now", message: err.message });
