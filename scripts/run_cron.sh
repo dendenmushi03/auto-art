@@ -1,8 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# Prefer explicit APP_URL, then common Render URL envs.
-APP_URL="${APP_URL:-${RENDER_EXTERNAL_URL:-${WEB_SERVICE_URL:-}}}"
+# IMPORTANT:
+# - This must target the *web service* URL, not the cron service URL.
+# - In Render Cron services, RENDER_EXTERNAL_URL points to the cron service itself,
+#   so we intentionally DO NOT use it here.
+APP_URL="${APP_URL:-${WEB_SERVICE_URL:-}}"
 CRON_KEY="${CRON_KEY:-${CRON_SECRET:-}}"
 CRON_ENDPOINT_PATH="${CRON_ENDPOINT_PATH:-/cron/run}"
 REQUEST_TIMEOUT_SEC="${REQUEST_TIMEOUT_SEC:-30}"
@@ -19,7 +22,7 @@ fail() {
 }
 
 if [[ -z "${APP_URL}" ]]; then
-  fail "APP_URL is not set. Set APP_URL (or RENDER_EXTERNAL_URL / WEB_SERVICE_URL) to your web service base URL."
+  fail "APP_URL is not set. Set APP_URL (or WEB_SERVICE_URL) to your web service base URL."
 fi
 
 if [[ -z "${CRON_KEY}" ]]; then
@@ -28,6 +31,10 @@ fi
 
 if [[ "${APP_URL}" == *"YOUR-APP"* ]]; then
   fail "APP_URL looks like a placeholder (${APP_URL}). Set the real Render web URL."
+fi
+
+if [[ "${APP_URL}" != http://* && "${APP_URL}" != https://* ]]; then
+  fail "APP_URL must start with http:// or https:// (current: ${APP_URL})"
 fi
 
 # Normalize URL pieces.
