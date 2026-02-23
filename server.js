@@ -53,6 +53,12 @@ let isGeneratingArtwork = false;
 let autoGenerateTimer = null;
 let serverInstance = null;
 let isShuttingDown = false;
+let isBooting = false;
+
+const BOOT_RETRY_DELAY_MS = Math.max(
+  1000,
+  Number.parseInt(process.env.BOOT_RETRY_DELAY_MS || "10000", 10) || 10000
+);
 
 function isDbConnected() {
   return mongoose.connection.readyState === 1;
@@ -237,23 +243,6 @@ function resolveExistingImagePath(imageUrl) {
     path: existingPath || candidates[0] || null,
     candidates,
   };
-}
-
-async function repairArtworkImage(artworkId) {
-  const relPath = await generateArtWithPython();
-  const imageUrl = "/" + relPath.replace(/\\/g, "/");
-
-  const repaired = await Artwork.findByIdAndUpdate(
-    artworkId,
-    {
-      imageUrl,
-    },
-    { new: true }
-  )
-    .populate("adSlotId")
-    .lean();
-
-  return repaired;
 }
 
 // URLバリデーション（購入者入力広告）
@@ -493,27 +482,18 @@ app.get("/api/current", async (req, res) => {
 
     const imageCheck = resolveExistingImagePath(artwork.imageUrl);
     if (!imageCheck.exists) {
-      console.warn("[/api/current] artwork image file missing. trying repair...", {
+      console.error("[/api/current] artwork image file missing. keeping listing unchanged.", {
         artworkId: artwork._id?.toString?.() || artwork._id,
         imageUrl: artwork.imageUrl,
         candidates: imageCheck.candidates,
       });
 
-      try {
-        const repaired = await repairArtworkImage(artwork._id);
-        if (repaired?.imageUrl) {
-          artwork = repaired;
-          console.log("[/api/current] artwork image repaired", {
-            artworkId: artwork._id?.toString?.() || artwork._id,
-            imageUrl: artwork.imageUrl,
-          });
-        }
-      } catch (repairErr) {
-        console.error("[/api/current] artwork image repair failed", {
-          artworkId: artwork._id?.toString?.() || artwork._id,
-          error: repairErr.message,
-        });
-      }
+      return res.status(503).json({
+        artwork: null,
+        ad: null,
+        error: "artwork_image_missing",
+        message: "現在の販売画像を取得できません。しばらくしてから再試行してください。",
+      });
     }
 
     let ad = null;
@@ -750,6 +730,12 @@ if (!isProduction) {
 const port = process.env.PORT || 3000;
 
 async function boot() {
+  if (isBooting || serverInstance) {
+    return;
+  }
+
+  isBooting = true;
+
   try {
     await connectDB(process.env.MONGODB_URI);
     serverInstance = app.listen(port, () => {
@@ -758,12 +744,19 @@ async function boot() {
       startAutoGenerateLoopIfEnabled();
     });
   } catch (err) {
-    await safeShutdown("boot failed", err);
+    console.error(`[boot] failed. retrying in ${BOOT_RETRY_DELAY_MS}ms`);
+    console.error("[boot] details:", err);
+
+    setTimeout(() => {
+      boot();
+    }, BOOT_RETRY_DELAY_MS);
+  } finally {
+    isBooting = false;
   }
 }
 
 process.on("unhandledRejection", (reason) => {
-  safeShutdown("unhandledRejection", reason);
+  console.error("[runtime] unhandledRejection:", reason);
 });
 
 process.on("uncaughtException", (err) => {
