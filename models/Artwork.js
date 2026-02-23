@@ -21,6 +21,8 @@ const artworkSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
   expiresAt: Date,
   soldAt: Date,
+  unlistedAt: { type: Date, default: null },
+  unlistedReason: { type: String, default: "" },
 
   // --- Ads (NEW) ---
   adSlotAssigned: { type: Boolean, default: false },

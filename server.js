@@ -6,6 +6,7 @@ import { exec } from "child_process";
 import Stripe from "stripe";
 import crypto from "crypto";
 import path from "path";
+import mongoose from "mongoose";
 
 import { connectDB } from "./config/db.js";
 import { Artwork } from "./models/Artwork.js";
@@ -42,6 +43,39 @@ const AUTO_GENERATE_INTERVAL_SEC = Math.max(
 
 let isGeneratingArtwork = false;
 let autoGenerateTimer = null;
+let serverInstance = null;
+let isShuttingDown = false;
+
+function isDbConnected() {
+  return mongoose.connection.readyState === 1;
+}
+
+async function safeShutdown(reason, err) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  console.error(`[fatal] ${reason}`);
+  if (err) {
+    console.error("[fatal] details:", err);
+  }
+
+  if (autoGenerateTimer) {
+    clearInterval(autoGenerateTimer);
+    autoGenerateTimer = null;
+  }
+
+  if (serverInstance) {
+    await new Promise((resolve) => serverInstance.close(resolve));
+  }
+
+  try {
+    await mongoose.connection.close(false);
+  } catch (closeErr) {
+    console.error("[fatal] mongo close error:", closeErr);
+  }
+
+  process.exit(1);
+}
 
 // ======================================================
 // 1) Stripe Webhook（raw body 必須）
@@ -124,7 +158,12 @@ app.get("/health", (req, res) => {
 });
 
 // ---- DB ----
-connectDB(process.env.MONGODB_URI);
+mongoose.connection.on("error", (err) => {
+  console.error("[db] connection error:", err);
+});
+mongoose.connection.on("disconnected", () => {
+  console.error("[db] disconnected");
+});
 
 // ======================================================
 // 3) ユーティリティ
@@ -176,10 +215,10 @@ if (u.protocol !== "https:") return "";
 // ======================================================
 // 4) 新作生成ロジック（3時間スロット制 + AdSlot割当）
 // ======================================================
-async function cleanupExpired(now) {
+async function cleanupExpired(nowUtc) {
   const expiringArtworks = await Artwork.find({
     status: "for_sale",
-    expiresAt: { $lte: now },
+    expiresAt: { $lte: nowUtc },
   })
     .select("_id adSlotId")
     .lean();
@@ -187,41 +226,61 @@ async function cleanupExpired(now) {
   const expiringArtworkIds = expiringArtworks.map((a) => a._id);
   const linkedAdSlotIds = expiringArtworks.map((a) => a.adSlotId).filter(Boolean);
 
+  console.log(
+    `[cleanup] start nowUtc=${nowUtc.toISOString()} expiringArtworks=${expiringArtworkIds.length} linkedAdSlots=${linkedAdSlotIds.length}`
+  );
+
   // 期限切れ artwork を burned
   if (expiringArtworkIds.length > 0) {
-    await Artwork.updateMany(
+    const artworkUpdateResult = await Artwork.updateMany(
       { _id: { $in: expiringArtworkIds } },
-      { $set: { status: "burned" } }
+      {
+        $set: {
+          status: "burned",
+          unlistedAt: nowUtc,
+          unlistedReason: "expired_listing_utc",
+        },
+      }
+    );
+    console.log(
+      `[cleanup] burned artworks count=${artworkUpdateResult.modifiedCount} ids=${expiringArtworkIds.join(",")}`
     );
   }
 
   // burned化された作品に紐づく active AdSlot も期限切れにする（整合性担保）
   if (linkedAdSlotIds.length > 0) {
-    await AdSlot.updateMany(
+    const adSlotUpdateResult = await AdSlot.updateMany(
       { _id: { $in: linkedAdSlotIds }, status: "active" },
-      { $set: { status: "expired", endsAt: now } }
+      { $set: { status: "expired", endsAt: nowUtc } }
+    );
+    console.log(
+      `[cleanup] expired linked ad slots count=${adSlotUpdateResult.modifiedCount} ids=${linkedAdSlotIds.join(",")}`
     );
   }
 
   // 期限切れ AdSlot を expired
-  await AdSlot.updateMany(
-    { status: "active", endsAt: { $lte: now } },
+  const expiredSlotsResult = await AdSlot.updateMany(
+    { status: "active", endsAt: { $lte: nowUtc } },
     { $set: { status: "expired" } }
   );
+  console.log(`[cleanup] expired active ad slots count=${expiredSlotsResult.modifiedCount}`);
+  console.log("[cleanup] end");
 }
 
 async function generateNewArtwork({ force = false } = {}) {
-  const now = new Date();
+  const nowUtc = new Date();
+
+  console.log(`[generate] start force=${force} nowUtc=${nowUtc.toISOString()}`);
 
   // まず期限切れ掃除
-  await cleanupExpired(now);
+  await cleanupExpired(nowUtc);
 
   // force=false のときは「現在販売中」があるなら生成しない
   if (!force) {
     const activeForSale = await Artwork.findOne({
       status: "for_sale",
-      createdAt: { $lte: now },
-      expiresAt: { $gt: now },
+      createdAt: { $lte: nowUtc },
+      expiresAt: { $gt: nowUtc },
     })
       .sort({ createdAt: -1 })
       .lean();
@@ -251,7 +310,7 @@ async function generateNewArtwork({ force = false } = {}) {
   });
 
   // 4) DB保存
-  const expiresAt = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+  const expiresAt = new Date(nowUtc.getTime() + 3 * 60 * 60 * 1000);
 
   const doc = await Artwork.create({
     title: "Abstract Artwork",
@@ -262,7 +321,7 @@ async function generateNewArtwork({ force = false } = {}) {
     status: "for_sale",
     stripeProductId: product.id,
     stripePriceId: stripePrice.id,
-    createdAt: now,
+    createdAt: nowUtc,
     expiresAt,
 
     // 広告枠
@@ -286,7 +345,8 @@ async function generateNewArtwork({ force = false } = {}) {
     console.log("[ad] slot assigned:", slot._id.toString(), "-> artwork", doc._id.toString());
   }
 
-  console.log("新作生成:", doc._id.toString(), imageUrl, price);
+  console.log(`[generate] created artworkId=${doc._id.toString()} imageUrl=${imageUrl} price=${price} expiresAt=${expiresAt.toISOString()}`);
+  console.log("[generate] end");
   return doc;
 }
 
@@ -339,34 +399,65 @@ function startAutoGenerateLoopIfEnabled() {
 // 5) API：現在販売中の作品 + 表示する広告
 // ======================================================
 app.get("/api/current", async (req, res) => {
-  const now = new Date();
+  const nowUtc = new Date();
 
-  // for_sale かつ販売期間内
-  const artwork = await Artwork.findOne({
-    status: "for_sale",
-    createdAt: { $lte: now },
-    expiresAt: { $gt: now },
-  })
-    .sort({ createdAt: -1 })
-    .populate("adSlotId") // Artwork側でref設定必須
-    .lean();
-
-  let ad = null;
-  if (artwork?.adSlotId) {
-    const slot = artwork.adSlotId;
-    const inTime =
-      slot.status === "active" &&
-      slot.startsAt &&
-      slot.endsAt &&
-      now >= new Date(slot.startsAt) &&
-      now <= new Date(slot.endsAt);
-
-    if (inTime && slot.ad) {
-      ad = slot.ad;
-    }
+  if (!isDbConnected()) {
+    console.error("[/api/current] db unavailable", {
+      readyState: mongoose.connection.readyState,
+      nowUtc: nowUtc.toISOString(),
+    });
+    return res.status(503).json({
+      artwork: null,
+      ad: null,
+      error: "database_unavailable",
+      message: "現在データベースに接続できません。しばらくしてから再試行してください。",
+    });
   }
 
-  res.json({ artwork, ad });
+  try {
+    // for_sale かつ販売期間内（UTC基準）
+    const artwork = await Artwork.findOne({
+      status: "for_sale",
+      createdAt: { $lte: nowUtc },
+      expiresAt: { $gt: nowUtc },
+    })
+      .sort({ createdAt: -1 })
+      .populate("adSlotId") // Artwork側でref設定必須
+      .lean();
+
+    if (!artwork) {
+      return res.json({
+        artwork: null,
+        ad: null,
+        message: "現在公開中の作品はありません。次の出品をお待ちください。",
+      });
+    }
+
+    let ad = null;
+    if (artwork?.adSlotId) {
+      const slot = artwork.adSlotId;
+      const inTime =
+        slot.status === "active" &&
+        slot.startsAt &&
+        slot.endsAt &&
+        nowUtc >= new Date(slot.startsAt) &&
+        nowUtc <= new Date(slot.endsAt);
+
+      if (inTime && slot.ad) {
+        ad = slot.ad;
+      }
+    }
+
+    return res.json({ artwork, ad });
+  } catch (err) {
+    console.error("[/api/current] failed:", err);
+    return res.status(500).json({
+      artwork: null,
+      ad: null,
+      error: "current_fetch_failed",
+      message: "現在作品情報の取得に失敗しました。時間をおいて再試行してください。",
+    });
+  }
 });
 
 // ======================================================
@@ -543,8 +634,26 @@ if (!isProduction) {
 // 10) 起動
 // ======================================================
 const port = process.env.PORT || 3000;
-app.listen(port, () => {
-  console.log("Server started on port", port);
-  console.log(`[boot] PORT=${port} NODE_ENV=${nodeEnv} isProduction=${isProduction} hasDevSecret=${hasDevSecret}`);
-  startAutoGenerateLoopIfEnabled();
+
+async function boot() {
+  try {
+    await connectDB(process.env.MONGODB_URI);
+    serverInstance = app.listen(port, () => {
+      console.log("Server started on port", port);
+      console.log(`[boot] PORT=${port} NODE_ENV=${nodeEnv} isProduction=${isProduction} hasDevSecret=${hasDevSecret}`);
+      startAutoGenerateLoopIfEnabled();
+    });
+  } catch (err) {
+    await safeShutdown("boot failed", err);
+  }
+}
+
+process.on("unhandledRejection", (reason) => {
+  safeShutdown("unhandledRejection", reason);
 });
+
+process.on("uncaughtException", (err) => {
+  safeShutdown("uncaughtException", err);
+});
+
+boot();
