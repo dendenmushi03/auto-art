@@ -45,7 +45,7 @@
             <span id="preview-remaining" class="text-muted"></span>
           </div>
           <img id="preview-image" class="preview-image" alt="現在の作品プレビュー">
-          <div id="preview-fallback" class="text-muted" style="display:none;">プレビューを読み込めませんでした</div>
+          <div id="preview-fallback" class="text-muted" style="display:none;">画像の取得に失敗しました。更新してください。</div>
         </div>
       </div>
     </section>
@@ -142,22 +142,38 @@
         try {
           const res = await fetch("/api/current");
           const data = await res.json().catch(() => ({}));
-          if (!res.ok || !data.artwork) {
-            throw new Error("no artwork");
+          if (!res.ok) {
+            throw new Error("current_fetch_failed");
           }
+
+          if (!data.artwork) {
+            img.style.display = "none";
+            fallback.style.display = "block";
+            fallback.textContent = "現在販売中の作品はありません";
+            title.textContent = "現在の作品は準備中です";
+            price.textContent = "";
+            remaining.textContent = "";
+            return;
+          }
+
           const art = data.artwork;
           title.textContent = art.title || "Abstract Artwork";
           price.textContent = `${Number(art.price || 0).toLocaleString()} 円`;
           remaining.textContent = formatRemainText(art.expiresAt);
+          img.style.display = "block";
+          fallback.style.display = "none";
+          fallback.textContent = "画像の取得に失敗しました。更新してください。";
           img.src = art.imageUrl;
           img.alt = art.title || "Abstract Artwork";
           img.onerror = () => {
             img.style.display = "none";
             fallback.style.display = "block";
+            fallback.textContent = "画像の取得に失敗しました。更新してください。";
           };
         } catch (e) {
           img.style.display = "none";
           fallback.style.display = "block";
+          fallback.textContent = "プレビューの読み込みに失敗しました。更新してください。";
           title.textContent = "現在の作品は準備中です";
           price.textContent = "";
           remaining.textContent = "";
