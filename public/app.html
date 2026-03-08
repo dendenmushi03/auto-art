@@ -98,7 +98,7 @@
       function createImageFallback() {
         const fallback = document.createElement("div");
         fallback.className = "art-image-fallback";
-        fallback.textContent = "IMAGE UNAVAILABLE";
+        fallback.textContent = "画像の取得に失敗しました。更新してください。";
         return fallback;
       }
 
@@ -177,7 +177,7 @@
 
         const img = document.createElement("img");
         img.className = "art-image";
-        img.src = art.imageUrl;
+        img.src = `${art.imageUrl}${art.updatedAt || art.createdAt ? `?v=${encodeURIComponent(art.updatedAt || art.createdAt)}` : ""}`;
         img.alt = art.title || "Abstract Artwork";
         img.loading = "lazy";
         img.addEventListener("error", () => {
